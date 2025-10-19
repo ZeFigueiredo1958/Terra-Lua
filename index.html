@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b1020">
+<title>Terra–Lua: Medidor Diário (PWA)</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --card: #121a33;
+    --text: #eaf0ff;
+    --accent: #89b4fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+    background: radial-gradient(circle at 20% 0%, #0e1530, #0b1020 40%); color: var(--text); }
+  h1 { font-size: clamp(22px, 4vw, 34px); margin: 0 0 8px; }
+  p.sub { margin: 0 0 18px; color: #c9d4ff; opacity: .9; }
+  .wrap { max-width: 980px; margin: 0 auto; display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .card { background: linear-gradient(180deg, #10193a, #0d1430); border: 1px solid rgba(255,255,255,.06); border-radius: 18px; padding: 18px; }
+  .row { display:flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+  .pill { display:inline-flex; align-items:center; gap:8px; padding: 6px 10px; border-radius: 999px; background: rgba(137,180,250,.12); color: var(--accent); font-weight: 600; font-size: 14px; border: 1px solid rgba(137,180,250,.35); }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; } @media (max-width: 800px){ .grid{ grid-template-columns: 1fr; } }
+  .big { font-size: clamp(28px, 7vw, 56px); font-weight: 800; }
+  .muted { color: #a6b5ff; opacity: .85;}
+  .meter { width: 100%; height: 28px; border-radius: 999px; background: linear-gradient(180deg, #0f1836, #0a1128); border: 1px solid rgba(255,255,255,.06); overflow: hidden; }
+  .bar { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5cc1ff, #7ad07a); box-shadow: 0 0 20px rgba(124, 220, 255, .35); width: 0%; }
+  .ticks { display:flex; justify-content: space-between; font-size: 12px; margin-top: 6px; color:#c5d3ff; }
+  canvas { width: 100%; height: 320px; display:block; }
+  label { font-size: 13px; color:#cfe1ff; margin-right:8px; }
+  input[type="date"] { background:#0f1732; border:1px solid rgba(255,255,255,.12); color:#eaf0ff; padding:8px 10px; border-radius:10px; }
+  button { background:#1a2550; color:#eaf0ff; border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:10px 14px; cursor:pointer; font-weight:700; }
+  .mini { font-size: 12px; opacity: .85; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Medidor Diário: Distância Terra–Lua (PWA)</h1>
+      <p class="sub">Instale no celular (Android/Chrome) como app. Funciona offline. Hospedado no GitHub Pages.</p>
+    </header>
+
+    <section class="card">
+      <div class="row">
+        <div>
+          <div class="pill" id="nowLocal">Agora: —</div>
+          <div class="mini" id="tzInfo"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <label for="dia">Escolha um dia:</label>
+          <input type="date" id="dia">
+          <button id="btnHoje">Hoje</button>
+          <button id="btnInstall" style="display:none">Instalar</button>
+          <button id="btnShare">Compartilhar</button>
+        </div>
+      </div>
+      <div class="grid" style="margin-top: 12px;">
+        <div>
+          <div class="big" id="distNow">— km</div>
+          <div class="muted" id="statusNow">Calculando…</div>
+          <div class="meter" style="margin-top:12px;">
+            <div class="bar" id="bar"></div>
+          </div>
+          <div class="ticks">
+            <span>Perigeu (~363.300 km)</span>
+            <span>Apogeu (~405.500 km)</span>
+          </div>
+        </div>
+        <div>
+          <canvas id="chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin:0 0 8px">Como funciona</h3>
+      <p style="margin-top:0">Aproximação (Meeus truncado) para estimar a <strong>distância geocêntrica Terra–Lua</strong>. Precisão ~1%.</p>
+      <ul>
+        <li>Gráfico 60 dias.</li>
+        <li>Instalável (PWA) e offline.</li>
+        <li>Sem dependências externas.</li>
+      </ul>
+    </section>
+  </div>
+
+<script>
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  const btn = document.getElementById('btnInstall');
+  btn.style.display = 'inline-block';
+  btn.onclick = async () => {
+    btn.style.display = 'none';
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt = null;
+    }
+  };
+});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(console.error);
+}
+document.getElementById('btnShare').onclick = async () => {
+  const title = 'Medidor Terra–Lua';
+  const text = 'Veja a distância Terra–Lua hoje.';
+  const url = location.href;
+  if (navigator.share) { try { await navigator.share({ title, text, url }); } catch(e){} }
+  else { navigator.clipboard.writeText(url); alert('Link copiado.'); }
+};
+
+const DEG2RAD = Math.PI / 180;
+function julianDay(date){
+  const t = new Date(date.getTime());
+  const Y = t.getUTCFullYear();
+  let M = t.getUTCMonth() + 1;
+  const D = t.getUTCDate() + t.getUTCHours()/24 + t.getUTCMinutes()/(24*60) + t.getUTCSeconds()/(24*3600) + t.getUTCMilliseconds()/(24*3600*1000);
+  let A = Math.floor((14 - M) / 12);
+  let y = Y + 4800 - A;
+  let m = M + 12*A - 3;
+  let JDN = Math.floor((153*m + 2)/5) + D + 365*y + Math.floor(y/4) - Math.floor(y/100) + Math.floor(y/400) - 32045;
+  let JD = JDN + (t.getUTCHours() - 12)/24 + t.getUTCMinutes()/(24*60) + t.getUTCSeconds()/(24*3600) + t.getUTCMilliseconds()/(24*3600*1000);
+  return JD;
+}
+function moonDistanceKm(date){
+  const JD = julianDay(date);
+  const d = JD - 2451545.0;
+  const D  = (297.8501921 + 12.19074912*d) % 360;
+  const Mp = (134.9633964 + 13.06499295*d) % 360;
+  const Dr  = D*DEG2RAD, Mpr=Mp*DEG2RAD;
+  let delta = 385000.56
+    - 20905.355 * Math.cos(Mpr)
+    - 3699.111  * Math.cos(2*Dr - Mpr)
+    - 2955.968  * Math.cos(2*Dr)
+    - 569.925   * Math.cos(2*Mpr)
+    + 48.888    * Math.cos(2*Dr + Mpr)
+    - 3.148     * Math.cos(2*Dr - 2*Mpr);
+  delta += - 0.390 * Math.cos(2*((93.2720950 + 13.22935024*d)%360)*DEG2RAD);
+  return delta;
+}
+function fmtKm(x){ return x.toLocaleString(undefined, {maximumFractionDigits:0}); }
+function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+
+const distNowEl = document.getElementById('distNow');
+const statusNowEl = document.getElementById('statusNow');
+const barEl = document.getElementById('bar');
+const nowLocalEl = document.getElementById('nowLocal');
+const tzInfoEl = document.getElementById('tzInfo');
+const dateInput = document.getElementById('dia');
+const btnHoje = document.getElementById('btnHoje');
+
+const PERIGEE = 363300, APOGEE = 405500;
+function perigeePercent(km){ return clamp(1 - (km - PERIGEE) / (APOGEE - PERIGEE), 0, 1); }
+
+function updateNow(){
+  const now = new Date();
+  const dist = moonDistanceKm(now);
+  distNowEl.textContent = fmtKm(dist) + " km";
+  const p = perigeePercent(dist);
+  barEl.style.width = (p*100).toFixed(1) + "%";
+  statusNowEl.textContent = p > 0.6 ? "Perto do perigeu" : p < 0.4 ? "Perto do apogeu" : "Entre perigeu e apogeu";
+  nowLocalEl.textContent = "Agora: " + now.toLocaleString();
+  tzInfoEl.textContent = "Fuso: " + Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+function drawChart(){
+  const cvs = document.getElementById('chart');
+  const ctx = cvs.getContext('2d');
+  const DPR = window.devicePixelRatio || 1;
+  const W = cvs.clientWidth * DPR, H = cvs.clientHeight * DPR;
+  cvs.width = W; cvs.height = H;
+  ctx.clearRect(0,0,W,H);
+  const N = 60;
+  const today = new Date(); today.setHours(12,0,0,0);
+  let min=1e9, max=-1e9; const ys=[];
+  for(let i=0;i<N;i++){ const d=new Date(today.getTime()+i*86400000); const k=moonDistanceKm(d); ys.push(k); if(k<min)min=k; if(k>max)max=k; }
+  const m={l:48,r:16,t:10,b:30}; const x0=m.l,x1=W-m.r,y0=H-m.b,y1=m.t;
+  function X(i){ return x0 + i*(x1-x0)/(N-1); }
+  function Y(v){ return y0 - (v-min)*(y0-y1)/(max-min+1e-6); }
+  ctx.globalAlpha=0.9; ctx.lineWidth=1*DPR; ctx.strokeStyle="rgba(255,255,255,0.18)";
+  ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y0); ctx.moveTo(x0,y0); ctx.lineTo(x0,y1); ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,0.10)";
+  for(let s=0;s<=4;s++){ const yy=y0 - s*(y0-y1)/4; ctx.beginPath(); ctx.moveTo(x0,yy); ctx.lineTo(x1,yy); ctx.stroke();
+    const val = min + s*(max-min)/4; ctx.fillStyle="rgba(234,240,255,0.85)"; ctx.font=(12*DPR)+"px system-ui"; ctx.textAlign="right"; ctx.textBaseline="middle"; ctx.fillText(Math.round(val).toLocaleString()+" km", x0-8*DPR, yy); }
+  ctx.beginPath(); for(let i=0;i<N;i++){ const x=X(i), y=Y(ys[i]); if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.strokeStyle="rgba(168,205,255,0.95)"; ctx.lineWidth=2.5*DPR; ctx.shadowColor="rgba(140,200,255,0.35)"; ctx.shadowBlur=10*DPR; ctx.stroke(); ctx.shadowBlur=0;
+  ctx.fillStyle="rgba(234,240,255,0.9)"; ctx.font=(12*DPR)+"px system-ui"; ctx.textAlign="center"; ctx.textBaseline="top";
+  ctx.fillText("Hoje", X(0), y0+6*DPR);
+  ctx.fillText(new Intl.DateTimeFormat(undefined,{day:'2-digit',month:'2-digit'}).format(new Date(today.getTime()+59*86400000)), X(59), y0+6*DPR);
+}
+function updateSelected(){
+  const v = dateInput.value; if(!v) return;
+  const [Y,M,D]=v.split("-").map(Number);
+  const d = new Date(Y, M-1, D, 12, 0, 0);
+  const km = moonDistanceKm(d);
+  alert("Distância em " + d.toLocaleDateString() + ": " + fmtKm(km) + " km");
+}
+dateInput.addEventListener('change', updateSelected);
+btnHoje.addEventListener('click', ()=>{ const now=new Date(); dateInput.valueAsDate=now; updateSelected(); });
+function tick(){ updateNow(); drawChart(); }
+tick(); setInterval(updateNow, 60*1000);
+</script>
+</body>
+</html>
